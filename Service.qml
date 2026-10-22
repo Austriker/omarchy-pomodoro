@@ -36,12 +36,50 @@ Item {
     ? String(manifest.__sourceDir).replace(/^file:\/\//, "").replace(/\/$/, "") : ""
   readonly property string stateReaderPath: sourceDir ? sourceDir + "/pomo-state-read" : ""
 
-  // ---- configuration (inline on the widget's bar entry; hot-reloaded by the shell)
-  // Third-party plugins are handed `shell.barConfig` (== shellConfig.bar), never
-  // the full shellConfig -- reading `shell.shellConfig` here always returned
-  // undefined, so every setting silently fell back to its manifest default.
-  readonly property var entry: Pomo.findEntry(shell ? shell.barConfig : null, pluginId)
+  // ---- configuration (inline on the widget's bar entry)
+  // `shell.barConfig` looks live but isn't: it's a one-shot JSON snapshot the
+  // host hands this plugin's scoped API object (shellApi.barConfig =
+  // shell.publicBarConfig()), refreshed only when the plugin registry or bar
+  // widget registry changes -- never when a setting is written via
+  // updateEntryInline, which is what every click in this widget goes
+  // through (`omarchy bar set` is NOT the same path: it goes through
+  // PluginRegistry.setBarWidget, which explicitly fires pluginsChanged() and
+  // so happens to force that resync -- a real click never does).
+  //
+  // Reading and watching shell.json ourselves (FileView.watchChanges /
+  // reload()) looked like the fix, but FileView's reload semantics in this
+  // environment did not reliably surface a fresh read either -- repeated
+  // external rewrites of shell.json were not consistently picked up even
+  // with an explicit poll calling reload(). Rather than chase FileView's
+  // internals further, read the file the dumbest way that can't lie: spawn
+  // `cat` on a timer and parse whatever it prints. Cheap (small local file,
+  // once a second) and has no dependency on any cache or watch mechanism.
+  readonly property string shellConfigPath: Quickshell.env("HOME") + "/.config/omarchy/shell.json"
+  property string shellConfigText: ""
+  readonly property var parsedShellConfig: {
+    if (!shellConfigText) return null
+    try { return JSON.parse(shellConfigText) } catch (e) { return null }
+  }
+  readonly property var entry: Pomo.findEntry(
+    parsedShellConfig && parsedShellConfig.bar ? parsedShellConfig.bar : null, pluginId)
   readonly property var config: Pomo.config(entry)
+
+  Process {
+    id: shellConfigReadProc
+    command: ["cat", root.shellConfigPath]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { if (text) root.shellConfigText = text }
+    }
+  }
+
+  Timer {
+    interval: 1000
+    repeat: true
+    running: true
+    triggeredOnStart: true
+    onTriggered: if (!shellConfigReadProc.running) shellConfigReadProc.running = true
+  }
 
   // ---- state
   property string phase: "idle"        // idle | focus | short | long | ready
