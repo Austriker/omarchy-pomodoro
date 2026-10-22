@@ -32,6 +32,17 @@ BarWidget {
   readonly property int todayCount: ready ? pomo.todayCount : 0
   readonly property int todayMinutes: ready ? pomo.todayMinutes : 0
 
+  // While "ready" (waiting for the user to continue into the next block)
+  // there's no countdown running yet, so show what starting now would run.
+  readonly property int readyDurationMs: {
+    if (!ready) return 0
+    if (pomo.readyNext === "break") {
+      var kind = Pomo.nextBreakKind(pomo.cyclesDone, cfg.longEvery)
+      return (kind === "long" ? cfg.longBreak : cfg.shortBreak) * 60000
+    }
+    return cfg.focus * 60000
+  }
+
   readonly property color accent: Color.accent
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property bool focusRunning: phase === "focus" && running
@@ -175,7 +186,7 @@ BarWidget {
         width: parent.width
         horizontalAlignment: Text.AlignHCenter
         text: root.phase === "idle" ? Pomo.mmss(root.cfg.focus * 60000)
-            : root.phase === "ready" ? "--:--"
+            : root.phase === "ready" ? Pomo.mmss(root.readyDurationMs)
             : root.clock
         color: root.paused ? Util.alpha(root.fg, 0.55) : root.fg
         font.family: root.bar.fontFamily
@@ -293,7 +304,8 @@ BarWidget {
       // ---- toggles (persisted inline on this widget's shell.json entry)
       Toggle {
         width: parent.width
-        label: "Silence notifications while focusing"
+        label: "Silence notifications"
+        description: "Mute alerts while focusing"
         checked: root.cfg.dnd
         foreground: root.fg
         accent: root.accent
@@ -311,7 +323,8 @@ BarWidget {
       }
       Toggle {
         width: parent.width
-        label: "Chime at the end of a block"
+        label: "Chime at block end"
+        description: "Play a sound when a block ends"
         checked: root.cfg.sound
         foreground: root.fg
         accent: root.accent
