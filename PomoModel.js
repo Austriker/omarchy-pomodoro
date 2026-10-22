@@ -32,22 +32,20 @@ var BREAK_TIPS = [
   "Walk to a window."
 ]
 
-function findEntry(shellConfig, id) {
-  if (!shellConfig) return null
-  var layout = shellConfig.bar && shellConfig.bar.layout
-  if (layout) {
-    for (var section in layout) {
-      var list = layout[section]
-      if (!Array.isArray(list)) continue
-      for (var i = 0; i < list.length; i++) {
-        if (list[i] && list[i].id === id) return list[i]
-      }
-    }
-  }
-  var plugins = shellConfig.plugins
-  if (Array.isArray(plugins)) {
-    for (var j = 0; j < plugins.length; j++) {
-      if (plugins[j] && plugins[j].id === id) return plugins[j]
+// `barConfig` is the scoped `bar` sub-object a third-party plugin actually
+// gets (`shell.barConfig`, i.e. shellConfig.bar) -- the full shellConfig
+// (with its top-level `.bar`/`.plugins`) is never exposed to us, so looking
+// for a `.bar.layout` under it (as earlier versions did) always missed and
+// silently fell back to defaults.
+function findEntry(barConfig, id) {
+  if (!barConfig) return null
+  var layout = barConfig.layout
+  if (!layout) return null
+  for (var section in layout) {
+    var list = layout[section]
+    if (!Array.isArray(list)) continue
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].id === id) return list[i]
     }
   }
   return null

@@ -37,7 +37,10 @@ Item {
   readonly property string stateReaderPath: sourceDir ? sourceDir + "/pomo-state-read" : ""
 
   // ---- configuration (inline on the widget's bar entry; hot-reloaded by the shell)
-  readonly property var entry: Pomo.findEntry(shell ? shell.shellConfig : null, pluginId)
+  // Third-party plugins are handed `shell.barConfig` (== shellConfig.bar), never
+  // the full shellConfig -- reading `shell.shellConfig` here always returned
+  // undefined, so every setting silently fell back to its manifest default.
+  readonly property var entry: Pomo.findEntry(shell ? shell.barConfig : null, pluginId)
   readonly property var config: Pomo.config(entry)
 
   // ---- state
@@ -69,7 +72,6 @@ Item {
 
   readonly property bool dndWanted: config.dnd && phase === "focus" && running
   readonly property bool overlayVisible: hydrated && config.overlay && !overlayDismissed && (isBreak || phase === "ready")
-  readonly property var notificationService: shell && typeof shell.serviceFor === "function" ? shell.serviceFor("omarchy.notifications") : null
 
   // ------------------------------------------------------------------ engine
 
@@ -230,23 +232,52 @@ Item {
 
   onDndWantedChanged: syncDnd()
 
+  // The notifications service is first-party-only: `shell.serviceFor(...)`
+  // is scoped to a plugin's own id (see createScopedPluginShell/
+  // pluginOwnsTarget in shell.qml), so a third-party plugin asking for
+  // "omarchy.notifications" always gets null back and silently never
+  // applies DND. `omarchy-shell <target> <method>` is a stable external IPC
+  // surface with no such scoping, so we shell out to it instead -- the same
+  // mechanism the bundled `uni-pomo` CLI and `omarchy-toggle-notification-
+  // silencing` already use.
   function syncDnd() {
-    var svc = notificationService
-    if (!svc || typeof svc.setDoNotDisturb !== "function") return
     if (dndWanted && !dndApplied) {
-      dndBefore = !!svc.doNotDisturb
-      svc.setDoNotDisturb(true)
       dndApplied = true
       persist()
+      if (!dndQueryProc.running) dndQueryProc.running = true
     } else if (!dndWanted && dndApplied) {
-      svc.setDoNotDisturb(dndBefore)
       dndApplied = false
       persist()
+      setDnd(dndBefore)
     }
   }
 
-  // The notifications service may come up after us; keep trying while the
-  // wanted and applied DND states disagree.
+  function setDnd(on) {
+    dndSetProc.command = ["omarchy-shell", "notifications", "setDnd", on ? "true" : "false"]
+    if (dndSetProc.running) dndSetProc.running = false
+    dndSetProc.running = true
+  }
+
+  Process {
+    id: dndQueryProc
+    command: ["omarchy-shell", "notifications", "isDnd"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.dndBefore = String(text || "").trim() === "on"
+        root.persist()
+        root.setDnd(true)
+      }
+    }
+  }
+
+  Process {
+    id: dndSetProc
+  }
+
+  // omarchy-shell (and the notifications service behind it) may not be up
+  // yet, or a call may simply fail; keep retrying while wanted and applied
+  // disagree.
   Timer {
     interval: 2000
     repeat: true
